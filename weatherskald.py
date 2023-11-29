@@ -3,25 +3,23 @@
 This program uses the WeatherFlow, OpenAI, and CoquiTTS libraries to gather weather data, transform it into a skaldic poem, and finally read that poem out loud using a synthesized voice. 
 
 To run this program you will need to install the following modules: 
-* PyTorch
-* CoquiTTS
 * OpenAI
+* PyTorch (optional)
+* CoquiTTS (optional)
 
 This file can be run as an independent script and imported as a module. 
 
 See the accompanying LICENSE file for license specifications. 
 """
 
-import torch
-from TTS.api import TTS
 import requests
 from openai import OpenAI
 
 
 class WeatherSkald:
-	"""This is the main skaldic class. To use, please create an instance of this class and call the skald_weather() member function. 
-	
-	Before you use this class, please make sure to include a training voice file in wav format (default filename weatherflow_default.wav) and to configure the various keys in weatherskald.cfg. 
+	"""This is the main skald class. To use, please create an instance of this class and call the skald_weather() (for OpenAI TTS) or skald_weather_local() (for local CoquiTTS) member functions. Please configure the various keys in weatherskald.cfg before running. 
+
+	If you want to use local CoquiTTS you will need to provide a training voice file in wav format (default filename weatherskald_default.wav). 
 
 	Attributes
 	----------
@@ -39,7 +37,7 @@ class WeatherSkald:
 	skald_weather(speakerfile=weatherskald_default.wav)
 		Class weather_poem() to get the poem to be read. Uses CoquiTTS to create sound file. Requires a speaker file to function (default weatherskald_default.wav)
 	"""
-	def __init__(self, configfile = "weatherskald.cfg", outputfile="skaldic_weather.wav"):
+	def __init__(self, configfile = "weatherskald.cfg", outputfile="skaldic_weather"):
 		"""Creates a new WeatherSkald instance. 
 		
 		Parameters
@@ -47,7 +45,7 @@ class WeatherSkald:
 		configfile : str
 			the name of the config file (default weatherskald.cfg)
 		outputfile : str
-			the name of the output file for the generator (default skaldic_weather.wav)
+			the name of the output file for the generator (default skaldic_weather.wav/mp3)
 		"""
 		self.config = dict()
 		self.outputfile = outputfile
@@ -55,6 +53,7 @@ class WeatherSkald:
 		for line in f.readlines():
 			larr = line.split(" ")
 			self.config[larr[0]] = larr[1].strip('\n') # Grab config data
+		self.client = OpenAI(api_key=self.config['openai_key'])
 
 	def fetch_forecast(self):
 		"""Gets the forecast from the weather station configured in the config file. 
@@ -91,26 +90,36 @@ class WeatherSkald:
 		str
 			the skaldic poem describing the weather forecast
 		"""
-		client = OpenAI(api_key=self.config['openai_key'])
 		data = self.fetch_forecast()
 		content = f"Write a paragraph describing the following weather in the style of a Viking skald: {data}"
-		gpt_response = client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": content}])
+		gpt_response = self.client.chat.completions.create(model="gpt-4", messages=[{"role": "user", "content": content}])
 		return gpt_response.choices[0].message.content
 
-	def skald_weather(self, speakerfile = "weatherskald_default.wav"):
-		"""Gets a poem from weather_poem() and runs it through CoquiTTS to read the poem. 
+	def skald_weather(self):
+		"""Gets the poem from weather_poem() and runs it through OpenAI's TTS service to read the poem. Will output a .mp3 file.
+		"""
+		output_file_path = self.outputfile + ".mp3"
+		content = self.weather_poem()
+		response = self.client.audio.speech.create(model="tts-1", voice="onyx", input=content)
+		response.stream_to_file(output_file_path)
+
+	def skald_weather_local(self, speakerfile = "weatherskald_default.wav"):
+		"""Gets a poem from weather_poem() and runs it through CoquiTTS to read the poem. Will output a .wav file. 
 
 		Parameters
 		----------
 		speakerfile : str
 			the file name to use for the speaker voice (default is weatherskald_default.wav)
 		"""
+		import torch
+		from TTS.api import TTS
+
 		content = self.weather_poem()
 		
 		device = "cuda" if torch.cuda.is_available() else "cpu"
 		model = "tts_models/multilingual/multi-dataset/xtts_v2"
 		tts = TTS(model).to(device)
-		tts.tts_to_file(text = content, speaker_wav=speakerfile, language="en", file_path=self.outputfile)
+		tts.tts_to_file(text = content, speaker_wav=speakerfile, language="en", file_path=self.outputfile + ".mp3")
 		
 
 def main():
